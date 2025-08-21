@@ -120,4 +120,4 @@ docker compose up -d
 
 ## 许可
 
-本项目依赖 Ultralytics、FastAPI、Next.js、Tailwind 等开源软件，具体许可以各依赖为
+本项目依赖 Ultralytics、FastAPI、Next.js、Tailwind 等开源软件，具体许可以各依赖为准。
