@@ -1,0 +1,20 @@
+services:
+  app:
+    build:
+      context: .
+      network: host   # 仅构建时使用宿主网络，绕过 veth
+    image: jundek:latest
+    network_mode: host
+    environment:
+      # 按你的后端读取逻辑设置
+      - MODEL_PATH=/app/model/best.pt
+      - RECYCLABLE_CLASSES=recyclable,可回收,plastic,glass,metal,paper,can,bottle
+    volumes:
+      # 可选：用宿主机的模型覆盖镜像内模型，便于热切换
+      - ./model:/app/model:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
