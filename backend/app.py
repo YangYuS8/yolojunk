@@ -1,7 +1,7 @@
 import os
 import io
 from typing import List
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
@@ -87,6 +87,19 @@ async def predict(file: UploadFile = File(...)):
             recyclable = True
 
     return {'recyclable': recyclable, 'detections': detections}
+
+@app.get('/favicon.ico')
+async def favicon():
+    p = 'frontend/out/favicon.ico'
+    if os.path.exists(p):
+        return FileResponse(p)
+    # 没有 favicon 时静默返回 204，避免报错日志
+    return Response(status_code=204)
+
+@app.get('/.well-known/appspecific/com.chrome.devtools.json')
+async def chrome_devtools_probe():
+    # 204 No Content：不得包含响应体
+    return Response(status_code=204)
 
 # 仅当作为独立程序运行时启动（镜像会用 uvicorn 启动）
 if __name__ == '__main__':

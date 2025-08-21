@@ -33,6 +33,7 @@ function drawHighDPRCanvas(canvas: HTMLCanvasElement, width: number, height: num
 export default function UploadCard() {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [loading, setLoading] = useState(false)
   const [detections, setDetections] = useState<Detection[]>([])
   const [recyclable, setRecyclable] = useState<boolean | null>(null)
@@ -44,7 +45,11 @@ export default function UploadCard() {
     const img = new Image()
     img.src = URL.createObjectURL(f)
     await new Promise((r) => (img.onload = r))
-    const tmp = resizeImageCanvas(img, 640)
+    // const tmp = resizeImageCanvas(img, 640)
+    // 以占位容器的实际宽度作为缩放上限（回退到 640）
+     const targetCssW =
+    Math.max(1, Math.floor(containerRef.current?.clientWidth ?? 640))
+    const tmp = resizeImageCanvas(img, targetCssW)
     const blob = await new Promise<Blob | null>((res) =>
       tmp.toBlob((b) => res(b), 'image/jpeg', 0.9)
     )
@@ -115,7 +120,7 @@ export default function UploadCard() {
           className="px-4 py-2 rounded bg-blue-600 text-white"
           onClick={() => fileRef.current?.click()}
         >
-          拍照/选图
+          选择图片
         </button>
         <button className="px-4 py-2 rounded border" onClick={reset}>
           返回开始
@@ -130,8 +135,13 @@ export default function UploadCard() {
         />
       </div>
 
-      <div className="mt-4">
-        <canvas ref={canvasRef} className="w-full rounded bg-gray-100" />
+      {/* <div className="mt-4" ref={containerRef}>
+        <canvas ref={canvasRef} className="w-full rounded bg-gray-100" /> */}
+      <div
+        className="mt-4 h-[60dvh] md:h-[70dvh] lg:h-[75dvh] min-h-[280px] max-h-[720px]"
+        ref={containerRef}
+      >
+        <canvas ref={canvasRef} className="w-full h-full rounded bg-gray-100" />
       </div>
 
       <div className="mt-3">
