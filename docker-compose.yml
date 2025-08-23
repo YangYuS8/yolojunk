@@ -2,19 +2,24 @@ services:
   app:
     build:
       context: .
-      network: host   # 仅构建时使用宿主网络，绕过 veth
+      network: host
     image: jundek:latest
     network_mode: host
     environment:
-      # 按你的后端读取逻辑设置
       - MODEL_PATH=/app/model/best.pt
       - RECYCLABLE_CLASSES=recyclable,可回收,plastic,glass,metal,paper,can,bottle
+      # 分类聚合策略（推荐）
+      - CLASS_AGGREGATION=topk_sum      # 可选：sum_all | topk_sum | top1_max | normalized_sum
+      - CLASS_TOPK=5                    # topk_sum 时使用
+      - CLASS_MIN_PROB=0.01             # 忽略极低概率噪声
+      - DETECT_CONF=0.01                # 仅影响可视化框，不影响大类判定
+      # 可选：实例标记
+      - APP_TAG=compose-prod
     volumes:
-      # 可选：用宿主机的模型覆盖镜像内模型，便于热切换
       - ./model:/app/model:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/__ping || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

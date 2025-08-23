@@ -6,6 +6,24 @@ type Detection = {
   class_name: string
   confidence: number
   bbox: number[] // [x1,y1,x2,y2]
+  // 兼容后端可能返回的扩展字段
+  root?: string
+  is_recyclable?: boolean
+}
+
+type PredictResponse = {
+  recyclable?: boolean
+  major_category?: string | null
+  scores_by_category?: Record<string, number>
+  detections?: Detection[]
+}
+
+// 提取“顶级分类”（支持半/全角/长破折号），并做别名归一
+function extractRootCategory(name: string): string {
+  const head = (name?.split(/[-－—]+/)[0] ?? '').trim()
+  if (head === '其它垃圾' || head === '其余垃圾') return '其他垃圾'
+  if (head === '可回收') return '可回收物'
+  return head || name
 }
 
 function resizeImageCanvas(img: HTMLImageElement, maxWidth = 640) {
@@ -36,7 +54,7 @@ export default function UploadCard() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [loading, setLoading] = useState(false)
   const [detections, setDetections] = useState<Detection[]>([])
-  const [recyclable, setRecyclable] = useState<boolean | null>(null)
+  const [major, setMajor] = useState<string | null>(null)
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -75,9 +93,13 @@ export default function UploadCard() {
     try {
       const res = await fetch('/predict', { method: 'POST', body: fd })
       if (!res.ok) throw new Error('网络错误')
-      const data = await res.json()
-      setDetections(data.detections ?? [])
-      setRecyclable(Boolean(data.recyclable))
+      const data: PredictResponse = await res.json()
+      console.log('predict response:', data)
+      const dets: Detection[] = data.detections ?? []
+      setDetections(dets)
+      // 仅使用后端返回的四大类判定结果，保持与后端一致
+      const majorFromServer = (typeof data.major_category === 'string' && data.major_category) ? data.major_category : null
+      setMajor(majorFromServer)
 
       // draw boxes (use CSS pixel coords because ctx is scaled)
       if (canvasRef.current) {
@@ -85,16 +107,23 @@ export default function UploadCard() {
         ctx.lineWidth = Math.max(2, Math.round(Math.min(canvasRef.current.width, canvasRef.current.height) / (window.devicePixelRatio * 200)))
         ctx.strokeStyle = '#ff4757'
         ctx.font = '12px sans-serif'
-        const dets = data.detections ?? [];
+        // 将后端 bbox（原图坐标）按缩放比换算到当前可视画布
+        const scaleX = tmp.width / img.naturalWidth
+        const scaleY = tmp.height / img.naturalHeight
         dets.forEach((d: Detection) => {
           const [x1, y1, x2, y2] = d.bbox
-          ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+          const sx1 = Math.round(x1 * scaleX)
+          const sy1 = Math.round(y1 * scaleY)
+          const sx2 = Math.round(x2 * scaleX)
+          const sy2 = Math.round(y2 * scaleY)
+          ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
           const label = `${d.class_name} ${(d.confidence * 100).toFixed(1)}%`
           const tw = ctx.measureText(label).width + 8
           ctx.fillStyle = 'rgba(255,71,87,0.9)'
-          ctx.fillRect(x1, Math.max(0, y1 - 18), tw, 16)
+          const ty = Math.max(0, sy1 - 18)
+          ctx.fillRect(sx1, ty, tw, 16)
           ctx.fillStyle = '#fff'
-          ctx.fillText(label, x1 + 4, Math.max(0, y1 - 5))
+          ctx.fillText(label, sx1 + 4, ty + 12)
         })
       }
     } catch (err: unknown) {
@@ -104,9 +133,38 @@ export default function UploadCard() {
     setLoading(false)
   }
 
+  // 根据检测结果在前端兜底推断四大类（当后端未提供时）
+  function deriveMajor(dets: Detection[]): string | null {
+    if (!dets.length) return null
+    const roots = dets.map(d => extractRootCategory(d.class_name))
+    const uniq = Array.from(new Set(roots))
+    if (uniq.length === 1) return uniq[0]
+    const sums = new Map<string, number>()
+    for (let i = 0; i < dets.length; i++) {
+      const r = roots[i]
+      sums.set(r, (sums.get(r) ?? 0) + (dets[i].confidence || 0))
+    }
+    let best: string | null = null
+    let bestScore = -1
+    for (const [k, v] of sums) {
+      if (v > bestScore) { best = k; bestScore = v }
+    }
+    return best
+  }
+
+  function majorBadgeClass(m: string) {
+    switch (m) {
+      case '可回收物': return 'bg-green-100 text-green-800'
+      case '厨余垃圾': return 'bg-yellow-100 text-yellow-800'
+      case '其他垃圾': return 'bg-gray-100 text-gray-800'
+      case '有害垃圾': return 'bg-red-100 text-red-800'
+      default: return 'bg-gray-100 text-gray-700'
+    }
+  }
+
   function reset() {
     setDetections([])
-    setRecyclable(null)
+    setMajor(null)
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d')!
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
@@ -135,23 +193,25 @@ export default function UploadCard() {
         />
       </div>
 
-      {/* <div className="mt-4" ref={containerRef}>
-        <canvas ref={canvasRef} className="w-full rounded bg-gray-100" /> */}
+      {/* 结果徽章提前到画布上方，避免被大图区域挤到首屏之外 */}
+      <div className="mt-3 min-h-[2rem]">
+        {major ? (
+          <span className={`inline-block px-3 py-1 rounded ${majorBadgeClass(major)}`}>{major}</span>
+        ) : loading ? (
+          <span className="text-sm text-gray-500">检测中…</span>
+        ) : (
+          <span className="text-sm text-gray-400">等待检测结果</span>
+        )}
+      </div>
+
       <div
-        className="mt-4 h-[60dvh] md:h-[70dvh] lg:h-[75dvh] min-h-[280px] max-h-[720px]"
+        className="mt-2 h-[50dvh] md:h-[60dvh] lg:h-[65dvh] min-h-[240px] max-h-[640px]"
         ref={containerRef}
       >
         <canvas ref={canvasRef} className="w-full h-full rounded bg-gray-100" />
       </div>
 
-      <div className="mt-3">
-        {recyclable === null ? null : (
-          <div className={`inline-block px-3 py-1 rounded ${recyclable ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-            {recyclable ? '可回收' : '不可回收'}
-          </div>
-        )}
-      </div>
-
+      {/* 保留详细结果列表 */}
       <div className="mt-3 text-sm text-gray-700">
         {detections.map((d, i) => (
           <div key={i} className="mb-1">
