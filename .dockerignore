@@ -1,0 +1,16 @@
+.git
+.gitignore
+**/__pycache__/
+**/*.pyc
+.venv
+node_modules
+frontend/.next
+frontend/node_modules
+frontend/out
+# 模型与数据集不打包进镜像，运行时用卷挂载
+model/*
+!model/.gitkeep
+datasets
+dist
+.cache
+.DS_Store

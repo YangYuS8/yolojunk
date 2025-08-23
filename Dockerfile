@@ -2,15 +2,9 @@
 FROM node:20-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
-
-# 启用 corepack 以使用 pnpm（如果你项目用 npm 可改为 npm ci）
 RUN corepack enable
-
-# 先复制锁文件与包清单，充分利用缓存
 COPY frontend/package.json frontend/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
-
-# 复制其余前端代码并构建（Next 15 + output: 'export' 会产出 frontend/out）
 COPY frontend ./
 RUN pnpm build
 
@@ -18,24 +12,35 @@ RUN pnpm build
 FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-# 安装运行时库：OpenCV/ Pillow/ PyTorch 常见依赖
+# 安装运行时库（仅运行态必须项；去掉编译工具与 *-dev）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libgl1 \
     libglib2.0-0 \
-    libjpeg-dev \
-    zlib1g-dev \
     libgomp1 \
+    libjpeg62-turbo \
+    zlib1g \
     curl \
-  && rm -rf /var/lib/apt/lists/*
+    # OpenCV 运行时所需（即便使用 headless 版，也常需 libGL）
+    libgl1 \
+    libxext6 \
+    libsm6 \
+    libxrender1 \
+   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 先复制依赖清单并安装（利用 Docker 层缓存）
+# 先复制依赖清单并安装（充分利用缓存）
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+# 优先安装 CPU 版 torch/torchvision，避免被其他依赖拉到 CUDA 版
+# 如你的 requirements.txt 里包含 torch/torchvision，请移除或改为 +cpu 变体
+ARG TORCH_VER=2.5.1
+ARG TV_VER=0.20.1
+RUN pip install "torch==${TORCH_VER}+cpu" "torchvision==${TV_VER}+cpu" --index-url https://download.pytorch.org/whl/cpu
+# 安装其余依赖；opencv 使用 headless 变体，避免 GUI 依赖
+RUN pip install -r requirements.txt && \
+    pip install "opencv-python-headless>=4.8"
 
 # 拷贝后端代码
 COPY backend /app/backend
@@ -43,8 +48,8 @@ COPY backend /app/backend
 # 拷贝已构建的前端导出产物（确保与后端 [backend/app.py](backend/app.py) 的路径一致）
 COPY --from=frontend-builder /app/frontend/out /app/frontend/out
 
-# 模型目录（可在 compose 中用卷挂载覆盖）
-COPY model /app/model
+# 模型不再 COPY 进入镜像，改由 docker-compose 卷挂载提供（减小镜像）
+# 见 docker-compose.yml: volumes: ./model:/app/model:ro
 
 EXPOSE 8000
 
