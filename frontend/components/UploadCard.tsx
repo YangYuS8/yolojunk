@@ -1,5 +1,5 @@
 'use client'
-import React, { useRef, useState } from 'react'
+import React, { useRef, useState, useCallback } from 'react'
 
 type Detection = {
   class_id: number
@@ -55,26 +55,19 @@ export default function UploadCard() {
   const [loading, setLoading] = useState(false)
   const [detections, setDetections] = useState<Detection[]>([])
   const [major, setMajor] = useState<string | null>(null)
+  const [scores, setScores] = useState<Record<string, number> | null>(null)
+  const [hasImage, setHasImage] = useState(false)
 
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0]
-    if (!f) return
+  const handleFile = useCallback(async (f: File) => {
     setLoading(true)
+    setScores(null)
     const img = new Image()
     img.src = URL.createObjectURL(f)
     await new Promise((r) => (img.onload = r))
-    // const tmp = resizeImageCanvas(img, 640)
-    // 以占位容器的实际宽度作为缩放上限（回退到 640）
-     const targetCssW =
-    Math.max(1, Math.floor(containerRef.current?.clientWidth ?? 640))
+    const targetCssW = Math.max(1, Math.floor(containerRef.current?.clientWidth ?? 640))
     const tmp = resizeImageCanvas(img, targetCssW)
-    const blob = await new Promise<Blob | null>((res) =>
-      tmp.toBlob((b) => res(b), 'image/jpeg', 0.9)
-    )
-    if (!blob) {
-      setLoading(false)
-      return
-    }
+    const blob = await new Promise<Blob | null>((res) => tmp.toBlob((b) => res(b), 'image/jpeg', 0.9))
+    if (!blob) { setLoading(false); return }
 
     // draw original image to visible canvas with high DPR
     if (canvasRef.current) {
@@ -84,7 +77,9 @@ export default function UploadCard() {
       const imgEl = new Image()
       imgEl.src = tmp.toDataURL('image/jpeg', 0.9)
       await new Promise((r) => (imgEl.onload = r))
+      ctx.clearRect(0, 0, cssW, cssH)
       ctx.drawImage(imgEl, 0, 0, cssW, cssH)
+      setHasImage(true)
     }
 
     // upload
@@ -97,17 +92,16 @@ export default function UploadCard() {
       console.log('predict response:', data)
       const dets: Detection[] = data.detections ?? []
       setDetections(dets)
-      // 仅使用后端返回的四大类判定结果，保持与后端一致
       const majorFromServer = (typeof data.major_category === 'string' && data.major_category) ? data.major_category : null
       setMajor(majorFromServer)
+      setScores(data.scores_by_category ?? null)
 
       // draw boxes (use CSS pixel coords because ctx is scaled)
       if (canvasRef.current) {
         const ctx = canvasRef.current.getContext('2d')!
         ctx.lineWidth = Math.max(2, Math.round(Math.min(canvasRef.current.width, canvasRef.current.height) / (window.devicePixelRatio * 200)))
-        ctx.strokeStyle = '#ff4757'
+        ctx.strokeStyle = '#16a34a'
         ctx.font = '12px sans-serif'
-        // 将后端 bbox（原图坐标）按缩放比换算到当前可视画布
         const scaleX = tmp.width / img.naturalWidth
         const scaleY = tmp.height / img.naturalHeight
         dets.forEach((d: Detection) => {
@@ -119,8 +113,8 @@ export default function UploadCard() {
           ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
           const label = `${d.class_name} ${(d.confidence * 100).toFixed(1)}%`
           const tw = ctx.measureText(label).width + 8
-          ctx.fillStyle = 'rgba(255,71,87,0.9)'
           const ty = Math.max(0, sy1 - 18)
+          ctx.fillStyle = 'rgba(22,163,74,0.9)'
           ctx.fillRect(sx1, ty, tw, 16)
           ctx.fillStyle = '#fff'
           ctx.fillText(label, sx1 + 4, ty + 12)
@@ -131,6 +125,21 @@ export default function UploadCard() {
       alert('检测失败：' + msg)
     }
     setLoading(false)
+  }, [])
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (f) await handleFile(f)
+  }
+
+  const onDrop: React.DragEventHandler<HTMLDivElement> = async (ev) => {
+    ev.preventDefault()
+    const f = ev.dataTransfer.files?.[0]
+    if (f) await handleFile(f)
+  }
+
+  const onDragOver: React.DragEventHandler<HTMLDivElement> = (ev) => {
+    ev.preventDefault()
   }
 
   // 根据检测结果在前端兜底推断四大类（当后端未提供时）
@@ -165,6 +174,8 @@ export default function UploadCard() {
   function reset() {
     setDetections([])
     setMajor(null)
+    setScores(null)
+    setHasImage(false)
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d')!
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
@@ -173,16 +184,26 @@ export default function UploadCard() {
 
   return (
     <div className="bg-white rounded-xl p-4 mt-4 shadow">
-      <div className="flex gap-2">
-        <button
-          className="px-4 py-2 rounded bg-blue-600 text-white"
-          onClick={() => fileRef.current?.click()}
-        >
-          选择图片
-        </button>
-        <button className="px-4 py-2 rounded border" onClick={reset}>
-          返回开始
-        </button>
+      {/* 标题与按钮行 */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">上传或拍照</h2>
+          <p className="text-xs text-gray-500 mt-0.5">支持拖拽图片到下方区域</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-2 rounded-lg bg-blue-600 text-white shadow hover:bg-blue-700"
+            onClick={() => fileRef.current?.click()}
+          >
+            选择图片
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border text-gray-700 hover:bg-gray-50"
+            onClick={reset}
+          >
+            重置
+          </button>
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -193,34 +214,64 @@ export default function UploadCard() {
         />
       </div>
 
-      {/* 结果徽章提前到画布上方，避免被大图区域挤到首屏之外 */}
-      <div className="mt-3 min-h-[2rem]">
-        {major ? (
-          <span className={`inline-block px-3 py-1 rounded ${majorBadgeClass(major)}`}>{major}</span>
-        ) : loading ? (
-          <span className="text-sm text-gray-500">检测中…</span>
-        ) : (
-          <span className="text-sm text-gray-400">等待检测结果</span>
-        )}
-      </div>
-
+      {/* 画布/拖拽区域 */}
       <div
-        className="mt-2 h-[50dvh] md:h-[60dvh] lg:h-[65dvh] min-h-[240px] max-h-[640px]"
+        className="relative mt-3 h-[50dvh] md:h-[60dvh] lg:h-[65dvh] min-h-[240px] max-h-[640px] rounded-lg overflow-hidden"
         ref={containerRef}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
       >
-        <canvas ref={canvasRef} className="w-full h-full rounded bg-gray-100" />
-      </div>
-
-      {/* 保留详细结果列表 */}
-      <div className="mt-3 text-sm text-gray-700">
-        {detections.map((d, i) => (
-          <div key={i} className="mb-1">
-            {d.class_name} · {(d.confidence * 100).toFixed(1)}%
+        {/* 占位引导 */}
+        {!hasImage && (
+          <div className="absolute inset-0 border-2 border-dashed border-gray-300 rounded-lg grid place-items-center bg-gray-50">
+            <div className="text-center text-gray-500">
+              <img src="/upload.svg" alt="file" className="mx-auto mb-2 opacity-70" width={40} height={40} />
+              <div className="text-sm">拖拽图片到此处或点击右上角按钮上传</div>
+            </div>
           </div>
-        ))}
+        )}
+
+        {/* 结果徽章（覆盖在画布左上角） */}
+        {major && (
+          <div className="absolute left-2 top-2 z-10">
+            <span className={`inline-block px-3 py-1 rounded-lg shadow ${majorBadgeClass(major)}`}>{major}</span>
+          </div>
+        )}
+
+        {/* 加载遮罩 */}
+        {loading && (
+          <div className="absolute inset-0 z-10 bg-black/20 backdrop-blur-[1px] grid place-items-center">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-white shadow text-sm text-gray-700">
+              <span className="size-2.5 rounded-full bg-blue-600 animate-pulse" />
+              正在检测…
+            </div>
+          </div>
+        )}
+
+        <canvas ref={canvasRef} className="w-full h-full bg-white" />
       </div>
 
-      {loading && <div className="mt-2 text-sm text-gray-500">检测中…</div>}
+      {/* 四大类分数（若提供） */}
+      {scores && (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {Object.entries(scores).map(([k, v]) => (
+            <span key={k} className="px-2 py-1 rounded-full bg-gray-100 text-gray-800">
+              {k} · {(v * 100).toFixed(1)}%
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 详细检测列表（可选） */}
+      {detections.length > 0 && (
+        <div className="mt-3 text-sm text-gray-700">
+          {detections.map((d, i) => (
+            <div key={i} className="mb-1">
+              {d.class_name} · {(d.confidence * 100).toFixed(1)}%
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

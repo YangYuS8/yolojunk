@@ -339,6 +339,13 @@ async def favicon():
     # 没有 favicon 时静默返回 204，避免报错日志
     return Response(status_code=204)
 
+@app.get('/upload.svg')
+async def file_svg():
+    p = 'frontend/out/upload.svg'
+    if os.path.exists(p):
+        return FileResponse(p, media_type='image/svg+xml')
+    return Response(status_code=404)
+
 @app.get('/.well-known/appspecific/com.chrome.devtools.json')
 async def chrome_devtools_probe():
     # 204 No Content：不得包含响应体
