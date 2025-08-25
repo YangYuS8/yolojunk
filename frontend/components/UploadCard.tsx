@@ -1,5 +1,6 @@
 'use client'
 import React, { useRef, useState, useCallback } from 'react'
+import NextImage from 'next/image'
 
 type Detection = {
   class_id: number
@@ -61,7 +62,7 @@ export default function UploadCard() {
   const handleFile = useCallback(async (f: File) => {
     setLoading(true)
     setScores(null)
-    const img = new Image()
+    const img = new window.Image()
     img.src = URL.createObjectURL(f)
     await new Promise((r) => (img.onload = r))
     const targetCssW = Math.max(1, Math.floor(containerRef.current?.clientWidth ?? 640))
@@ -74,7 +75,7 @@ export default function UploadCard() {
       const cssW = tmp.width
       const cssH = tmp.height
       const ctx = drawHighDPRCanvas(canvasRef.current, cssW, cssH)
-      const imgEl = new Image()
+      const imgEl = new window.Image()
       imgEl.src = tmp.toDataURL('image/jpeg', 0.9)
       await new Promise((r) => (imgEl.onload = r))
       ctx.clearRect(0, 0, cssW, cssH)
@@ -142,25 +143,6 @@ export default function UploadCard() {
     ev.preventDefault()
   }
 
-  // 根据检测结果在前端兜底推断四大类（当后端未提供时）
-  function deriveMajor(dets: Detection[]): string | null {
-    if (!dets.length) return null
-    const roots = dets.map(d => extractRootCategory(d.class_name))
-    const uniq = Array.from(new Set(roots))
-    if (uniq.length === 1) return uniq[0]
-    const sums = new Map<string, number>()
-    for (let i = 0; i < dets.length; i++) {
-      const r = roots[i]
-      sums.set(r, (sums.get(r) ?? 0) + (dets[i].confidence || 0))
-    }
-    let best: string | null = null
-    let bestScore = -1
-    for (const [k, v] of sums) {
-      if (v > bestScore) { best = k; bestScore = v }
-    }
-    return best
-  }
-
   function majorBadgeClass(m: string) {
     switch (m) {
       case '可回收物': return 'bg-green-100 text-green-800'
@@ -225,7 +207,7 @@ export default function UploadCard() {
         {!hasImage && (
           <div className="absolute inset-0 border-2 border-dashed border-gray-300 rounded-lg grid place-items-center bg-gray-50">
             <div className="text-center text-gray-500">
-              <img src="/upload.svg" alt="file" className="mx-auto mb-2 opacity-70" width={40} height={40} />
+              <NextImage src="/upload.svg" alt="file" className="mx-auto mb-2 opacity-70" width={40} height={40} priority unoptimized />
               <div className="text-sm">拖拽图片到此处或点击右上角按钮上传</div>
             </div>
           </div>
