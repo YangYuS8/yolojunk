@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import json
 import time
 from collections import defaultdict
 from typing import List
@@ -44,6 +45,140 @@ ALT_ROOT_MAP = {
     '其余垃圾': '其他垃圾',
     '可回收': '可回收物',
 }
+
+# 四大类集合（用于过滤与最终判定）
+KNOWN_ROOTS = {'厨余垃圾', '可回收物', '其他垃圾', '有害垃圾'}
+
+def _load_json_env(name: str, default):
+    val = os.getenv(name)
+    if not val:
+        return default
+    try:
+        return json.loads(val)
+    except Exception:
+        try:
+            # 容错：允许使用单引号的 JSON 风格
+            return json.loads(val.replace("'", '"'))
+        except Exception:
+            return default
+
+# 显式类名映射默认值（基于 doc/classname.txt 的 30 类）
+_DEFAULT_CLASS_MAP = {
+    # 厨余垃圾
+    'Banana': '厨余垃圾',
+    'Apple': '厨余垃圾',
+    'Orange': '厨余垃圾',
+    'Tomato': '厨余垃圾',
+    'Carrot': '厨余垃圾',
+    'Cucumber': '厨余垃圾',
+    'Potato': '厨余垃圾',
+    'Bread': '厨余垃圾',
+    'Cake': '厨余垃圾',
+    'Pizza': '厨余垃圾',
+    'Hamburger': '厨余垃圾',
+    'Chicken': '厨余垃圾',
+    'Fish': '厨余垃圾',
+    'Food': '厨余垃圾',
+    'Fast food': '厨余垃圾',
+    'Pasta': '厨余垃圾',
+    'Pastry': '厨余垃圾',
+    'Snack': '厨余垃圾',
+    'Candy': '厨余垃圾',
+    # 可回收物
+    'Tin can': '可回收物',
+    'Bottle': '可回收物',
+    'Milk': '可回收物',
+    'Facial tissue holder': '可回收物',
+    'Soap dispenser': '可回收物',
+    # 其他垃圾
+    'Toothbrush': '其他垃圾',
+    'Drinking straw': '其他垃圾',
+    'Plastic bag': '其他垃圾',
+    'Toilet paper': '其他垃圾',
+    'Paper towel': '其他垃圾',
+    # 有害垃圾
+    'Light bulb': '有害垃圾',
+}
+
+# 显式类名映射：可通过环境变量覆盖上述默认值
+CLASS_ROOT_MAP = _load_json_env('CLASS_ROOT_MAP', _DEFAULT_CLASS_MAP)
+
+# 关键词启发式（优先级低于 CLASS_ROOT_MAP，可通过环境变量覆盖）
+_DEFAULT_KEYWORDS = {
+    '可回收物': [
+        'recyclable', 'recycle', 'plastic', 'glass', 'metal', 'paper', 'cardboard',
+        'can', 'bottle', 'jar', 'aluminum', 'tin', 'steel', 'carton', 'magazine', 'newspaper',
+        '可回收', '塑料', '玻璃', '金属', '纸', '易拉罐', '瓶', '纸箱', '报纸', '杂志'
+    ],
+    '厨余垃圾': [
+        'kitchen', 'food', 'organic', 'leftover', 'vegetable', 'fruit', 'bone', 'peel', 'shell',
+        '厨余', '餐厨', '食物', '剩饭', '剩菜', '果皮', '菜叶', '骨头', '蛋壳', '果核'
+    ],
+    '有害垃圾': [
+        'hazard', 'hazardous', 'harmful', 'toxic', 'battery', 'cell', 'accumulator', 'paint', 'solvent', 'mercury',
+        '医废', '药', '废药', '电池', '纽扣电池', '蓄电池', '油漆', '溶剂', '汞', '温度计', '杀虫剂'
+    ],
+    '其他垃圾': [
+        'other', 'residual', 'dry', 'trash', 'misc', 'general', 'rest', 'napkin', 'cigarette', 'ash', 'ceramic',
+        '其他', '其它', '其他垃圾', '残余', '干垃圾', '烟蒂', '尘土', '陶瓷', '污染', '不可回收'
+    ],
+}
+CLASS_ROOT_KEYWORDS = _load_json_env('CLASS_ROOT_KEYWORDS', _DEFAULT_KEYWORDS)
+
+def normalize_root_name(root: str) -> str:
+    if not root:
+        return root
+    r = ALT_ROOT_MAP.get(root.strip(), root.strip())
+    # 若已为四大类之一，直接返回
+    if r in KNOWN_ROOTS:
+        return r
+    # 英文/别名规范化
+    low = r.lower()
+    if any(k in low for k in ['recyclable', 'recycle']):
+        return '可回收物'
+    if any(k in low for k in ['kitchen', 'food', 'organic']):
+        return '厨余垃圾'
+    if any(k in low for k in ['hazard', 'toxic', 'harmful']):
+        return '有害垃圾'
+    if any(k in low for k in ['other', 'residual', 'dry', 'general']):
+        return '其他垃圾'
+    return r
+
+def map_name_to_root(name: str) -> str:
+    """将模型类名映射到四大类。
+    优先级：
+    1) 可解析的顶级前缀（中文：'可回收物-xxx' 等）
+    2) 显式映射 CLASS_ROOT_MAP
+    3) 关键词启发式 CLASS_ROOT_KEYWORDS
+    4) 回退到 extract_root_category(name)
+    """
+    raw = str(name or '').strip()
+    if not raw:
+        return raw
+    # 1) 若形如 “可回收物-xxx”，直接取前缀
+    head = DASH_PATTERN.split(raw, maxsplit=1)[0].strip()
+    head_norm = normalize_root_name(head)
+    if head_norm in KNOWN_ROOTS:
+        return head_norm
+
+    # 2) 显式映射（精确匹配，大小写不敏感）
+    low = raw.lower()
+    for k, v in CLASS_ROOT_MAP.items():
+        if low == str(k).lower():
+            return normalize_root_name(str(v))
+
+    # 3) 关键词启发式（出现即命中；若多类命中，取首次命中顺序的类别）
+    for root, kws in CLASS_ROOT_KEYWORDS.items():
+        try:
+            for kw in kws:
+                if kw and str(kw).lower() in low:
+                    return normalize_root_name(root)
+        except Exception:
+            continue
+
+    # 4) 回退：尝试按破折号前缀归一
+    fallback = normalize_root_name(extract_root_category(raw))
+    return fallback
 
 def extract_root_category(name: str) -> str:
     base = name.strip()
@@ -150,129 +285,38 @@ async def predict(file: UploadFile = File(...)):
     except Exception:
         pass
 
-    # 分类分支（适配分类模型）：当没有检测框或 boxes 无 data 时，使用 r.probs 进行大类判定
-    if (boxes is None) or (not has_data_attr):
-        probs_obj = getattr(r, 'probs', None)
-        if probs_obj is not None:
-            # 取概率向量
-            try:
-                vec = probs_obj.data if hasattr(probs_obj, 'data') else probs_obj
-                vec = vec.cpu().numpy() if hasattr(vec, 'cpu') else np.array(vec)
-            except Exception as e:
-                print('读取分类 probs 失败:', repr(e), flush=True)
-                vec = np.zeros((0,), dtype=float)
-            try:
-                print('classification 向量形状:', tuple(vec.shape), flush=True)
-            except Exception:
-                pass
-
-            # names 可能为 dict 或 list/tuple
-            def _name_of(i: int) -> str:
-                if isinstance(names, dict):
-                    return str(names.get(i, str(i)))
-                elif isinstance(names, (list, tuple)):
-                    return str(names[i]) if 0 <= i < len(names) else str(i)
-                else:
-                    return str(i)
-
-            # 预计算每个类的根类别
-            indices = list(range(len(vec)))
-            class_roots = {i: extract_root_category(_name_of(i)) for i in indices}
-
-            # 统计每个大类包含的细分类数量（用于 normalized_sum）
-            root_class_count = defaultdict(int)
-            for i in indices:
-                root_class_count[class_roots[i]] += 1
-
-            method = CLASS_AGGREGATION
-            topk = max(1, CLASS_TOPK)
-            min_p = max(0.0, CLASS_MIN_PROB)
-
-            if method == 'top1_max':
-                # 取全体中概率最大单类所属大类
-                best_idx = int(np.argmax(vec)) if len(vec) else -1
-                if best_idx >= 0:
-                    root = class_roots[best_idx]
-                    sums_all[root] += float(vec[best_idx])
-            elif method == 'topk_sum':
-                # 仅用全体中前 K 个最高概率类累加
-                if len(vec):
-                    top_idx = np.argsort(vec)[-topk:][::-1]
-                    for i in top_idx:
-                        p = float(vec[i])
-                        if p < min_p:
-                            continue
-                        sums_all[class_roots[int(i)]] += p
-            elif method == 'normalized_sum':
-                # 对每个类的概率按大类的“细分类数量”归一后再求和，降低类目数量差异的偏置
-                for i in indices:
-                    p = float(vec[i])
-                    if p < min_p:
-                        continue
-                    root = class_roots[i]
-                    denom = float(root_class_count.get(root, 1))
-                    sums_all[root] += p / denom
-            else:
-                # 默认：对所有类的概率直接求和（可能偏向细分类更多的大类）
-                for i in indices:
-                    p = float(vec[i])
-                    if p < min_p:
-                        continue
-                    sums_all[class_roots[i]] += p
-
-            known_roots = {'厨余垃圾', '可回收物', '其他垃圾', '有害垃圾'}
-            candidates = {k: v for k, v in sums_all.items() if k in known_roots} or dict(sums_all)
-            major_category = max(candidates.items(), key=lambda kv: kv[1])[0] if candidates else None
-            scores_by_category = candidates
-            recyclable = (major_category == '可回收物')
-
-            try:
-                print('分类聚合方法:', method, 'topk:', topk, 'min_p:', min_p, flush=True)
-                print('分类总分(CLASSIFICATION):', {k: round(v, 4) for k, v in scores_by_category.items()}, '=>', major_category, flush=True)
-            except Exception:
-                pass
-
-            payload = {
-                'recyclable': recyclable,
-                'major_category': major_category,
-                'scores_by_category': scores_by_category,
-                'detections': []
-            }
-            return JSONResponse(payload, headers={'X-App-Tag': APP_TAG})
-        # 分类与检测都不可用
-        return {
-            'recyclable': False,
-            'major_category': None,
-            'scores_by_category': {},
-            'detections': []
-        }
+    # 仅检测分支：若无 boxes，则视为无检出
+    # 下方统一按 boxes 读取与聚合
 
     # 稳健读取 Ultralytics Boxes：优先用 boxes.data (N,6) => [x1,y1,x2,y2,conf,cls]
     arr = None
-    try:
-        data = boxes.data
-        arr = data.cpu().numpy() if hasattr(data, 'cpu') else np.array(data)
-    except Exception as e:
-        # data 读取失败，退回分别取属性
+    if boxes is None:
+        arr = np.zeros((0, 6), dtype=float)
+    else:
         try:
-            xyxys = boxes.xyxy.cpu().numpy()
-            confs = boxes.conf.cpu().numpy()
-            clss  = boxes.cls.cpu().numpy().astype(int)
-            arr = np.concatenate([xyxys, confs.reshape(-1,1), clss.reshape(-1,1)], axis=1)
-        except Exception as e2:
-            print('读取 boxes 失败:', repr(e), '| fallback 失败:', repr(e2), flush=True)
-            arr = np.zeros((0, 6), dtype=float)
+            data = boxes.data
+            arr = data.cpu().numpy() if hasattr(data, 'cpu') else np.array(data)
+        except Exception as e:
+            # data 读取失败，退回分别取属性
+            try:
+                xyxys = boxes.xyxy.cpu().numpy()
+                confs = boxes.conf.cpu().numpy()
+                clss  = boxes.cls.cpu().numpy().astype(int)
+                arr = np.concatenate([xyxys, confs.reshape(-1,1), clss.reshape(-1,1)], axis=1)
+            except Exception as e2:
+                print('读取 boxes 失败:', repr(e), '| fallback 失败:', repr(e2), flush=True)
+                arr = np.zeros((0, 6), dtype=float)
 
-    # 兼容极端情况：如果 data 维度异常，退回分别取属性
-    if arr is None or arr.ndim != 2 or arr.shape[1] < 6:
-        try:
-            xyxys = boxes.xyxy.cpu().numpy()
-            confs = boxes.conf.cpu().numpy()
-            clss  = boxes.cls.cpu().numpy().astype(int)
-            arr = np.concatenate([xyxys, confs.reshape(-1,1), clss.reshape(-1,1)], axis=1)
-        except Exception as e3:
-            print('boxes 维度异常且 fallback 失败:', repr(e3), flush=True)
-            arr = np.zeros((0, 6), dtype=float)
+        # 兼容极端情况：如果 data 维度异常，退回分别取属性
+        if arr is None or arr.ndim != 2 or arr.shape[1] < 6:
+            try:
+                xyxys = boxes.xyxy.cpu().numpy()
+                confs = boxes.conf.cpu().numpy()
+                clss  = boxes.cls.cpu().numpy().astype(int)
+                arr = np.concatenate([xyxys, confs.reshape(-1,1), clss.reshape(-1,1)], axis=1)
+            except Exception as e3:
+                print('boxes 维度异常且 fallback 失败:', repr(e3), flush=True)
+                arr = np.zeros((0, 6), dtype=float)
 
     # 调试：打印当前 boxes 行列信息
     try:
@@ -295,7 +339,7 @@ async def predict(file: UploadFile = File(...)):
                 cls_name = str(cls_id)
         else:
             cls_name = str(cls_id)
-        root = extract_root_category(cls_name)
+        root = map_name_to_root(cls_name)
         # 参与四大类总分累加（不受阈值影响）
         sums_all[root] += conf
         # 仅当高于展示阈值时返回给前端画框（用于可视化，非判定依据）
@@ -310,8 +354,7 @@ async def predict(file: UploadFile = File(...)):
             })
 
     # 基于四大类进行最终决策：只比较四大类的置信度之和，取总和最大的作为判定
-    known_roots = {'厨余垃圾', '可回收物', '其他垃圾', '有害垃圾'}
-    candidates = {k: v for k, v in sums_all.items() if k in known_roots} or dict(sums_all)
+    candidates = {k: v for k, v in sums_all.items() if k in KNOWN_ROOTS} or dict(sums_all)
     major_category = max(candidates.items(), key=lambda kv: kv[1])[0] if candidates else None
     scores_by_category = candidates
     recyclable = (major_category == '可回收物')
