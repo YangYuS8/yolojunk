@@ -103,16 +103,17 @@ export default function UploadCard() {
         ctx.lineWidth = Math.max(2, Math.round(Math.min(canvasRef.current.width, canvasRef.current.height) / (window.devicePixelRatio * 200)))
         ctx.strokeStyle = '#16a34a'
         ctx.font = '12px sans-serif'
-        const scaleX = tmp.width / img.naturalWidth
-        const scaleY = tmp.height / img.naturalHeight
+        // 直接使用 bbox 坐标：我们上传的是 tmp 尺寸的图片，画布 CSS 尺寸与 tmp 相同
         dets.forEach((d: Detection) => {
           const [x1, y1, x2, y2] = d.bbox
-          const sx1 = Math.round(x1 * scaleX)
-          const sy1 = Math.round(y1 * scaleY)
-          const sx2 = Math.round(x2 * scaleX)
-          const sy2 = Math.round(y2 * scaleY)
+          const sx1 = Math.round(x1)
+          const sy1 = Math.round(y1)
+          const sx2 = Math.round(x2)
+          const sy2 = Math.round(y2)
           ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1)
-          const label = `${d.class_name} ${(d.confidence * 100).toFixed(1)}%`
+          // 优先显示中文顶级分类名（root），若无则回退到原始类名
+          const showName = d.root || d.class_name
+          const label = `${showName} ${(d.confidence * 100).toFixed(1)}%`
           const tw = ctx.measureText(label).width + 8
           const ty = Math.max(0, sy1 - 18)
           ctx.fillStyle = 'rgba(22,163,74,0.9)'
@@ -249,7 +250,10 @@ export default function UploadCard() {
         <div className="mt-3 text-sm text-gray-700">
           {detections.map((d, i) => (
             <div key={i} className="mb-1">
-              {d.class_name} · {(d.confidence * 100).toFixed(1)}%
+              {(d.root || d.class_name)} · {(d.confidence * 100).toFixed(1)}%
+              {d.root && d.class_name && d.root !== d.class_name && (
+                <span className="text-gray-400">（{d.class_name}）</span>
+              )}
             </div>
           ))}
         </div>
