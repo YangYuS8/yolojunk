@@ -246,18 +246,18 @@ export default function UploadCard() {
       )}
 
       {/* 详细检测列表（可选） */}
-      {detections.length > 0 && (
-        <div className="mt-3 text-sm text-gray-700">
-          {detections.map((d, i) => (
-            <div key={i} className="mb-1">
-              {(d.root || d.class_name)} · {(d.confidence * 100).toFixed(1)}%
-              {d.root && d.class_name && d.root !== d.class_name && (
-                <span className="text-gray-400">（{d.class_name}）</span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* {detections.length > 0 && ( */}
+        {/* <div className="mt-3 text-sm text-gray-700"> */}
+          {/* {detections.map((d, i) => ( */}
+            {/* <div key={i} className="mb-1"> */}
+              {/* {(d.root || d.class_name)} · {(d.confidence * 100).toFixed(1)}% */}
+              {/* {d.root && d.class_name && d.root !== d.class_name && ( */}
+                {/* <span className="text-gray-400">（{d.class_name}）</span> */}
+              {/* )} */}
+            {/* </div> */}
+          {/* ))} */}
+        {/* </div> */}
+      {/* )} */}
     </div>
   )
 }
