@@ -1,4 +1,4 @@
-# jundek
+# yolojunk
 
 一个基于 FastAPI + Ultralytics YOLO 的垃圾分类演示应用：
 - 后端提供 `/predict` 推理接口，使用“检测模型”结果聚合为中国垃圾分类四大类（厨余垃圾 / 可回收物 / 其他垃圾 / 有害垃圾），并内置默认类名映射；
